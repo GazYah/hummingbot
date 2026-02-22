@@ -1,7 +1,7 @@
 from hummingbot.core.api_throttler.data_types import LinkedLimitWeightPair, RateLimit
 from hummingbot.core.data_type.in_flight_order import OrderState
 
-# Constant for binance mainnet and testnet
+# Constant for binance mainnet and testnet!
 DEFAULT_DOMAIN = "com"
 TESTNET_DOMAIN = "testnet"
 
