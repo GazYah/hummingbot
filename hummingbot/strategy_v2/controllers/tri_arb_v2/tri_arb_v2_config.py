@@ -3,9 +3,10 @@ from decimal import Decimal
 from pydantic import Field, field_validator
 
 from hummingbot.strategy_v2.controllers.controller_base import ControllerBase, ControllerConfigBase
+from hummingbot.strategy_v2.executors.data_types import ConnectorPair
 
 
-class TriArbV2ControllerConfig(ControllerConfigBase):
+class TriArbV2ControllerConfigBase(ControllerConfigBase):
     """
     Placeholder text for TriArbV2ControllerConfig.
     """
@@ -118,4 +119,23 @@ class TriArbV2ControllerConfig(ControllerConfigBase):
 
 
 class TriArbV2ControllerBase(ControllerBase):
-    ...
+    """
+    Base class for TriArbV2Controller. Contains shared logic and utilities for the TriArbV2 strategy.
+    """
+
+    def __init__(self, config: TriArbV2ControllerConfigBase, *args, **kwargs):
+        super().__init__(config, *args, **kwargs)
+        self.config = config
+        self.market_data_provider.initialize_rate_sources([
+            ConnectorPair(
+                connector_name=self.config.binance_connector,
+                traiding_pair=self.config.binance_pairs[0]),
+            ConnectorPair(
+                connector_name=self.config.binance_connector,
+                traiding_pair=self.config.binance_pairs[1]),
+            ConnectorPair(
+                connector_name=self.config.uniswap_connector,
+                traiding_pair=self.config.uniswap_pair
+            )
+        ]
+        )
