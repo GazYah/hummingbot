@@ -11,7 +11,7 @@ from hummingbot.strategy_v2.controllers.tri_arb_v2.tri_arb_v2_config import (
 from hummingbot.strategy_v2.executors.data_types import ConnectorPair
 
 
-class TriArbV2ControllerTests(IsolatedAsyncioWrapperTestCase):
+class TestTriArbV2ControllerConfigBase(IsolatedAsyncioWrapperTestCase):
     def setUp(self):
         super().setUp()
         # Mocking dependencies
