@@ -4,6 +4,7 @@ from typing import List
 
 from pydantic import Field, field_validator
 
+from hummingbot.core.data_type.common import PriceType
 from hummingbot.strategy_v2.controllers.controller_base import ControllerBase, ControllerConfigBase
 from hummingbot.strategy_v2.executors.data_types import ConnectorPair
 
@@ -160,10 +161,12 @@ class TriArbV2ControllerBase(ControllerBase):
         print(prices)
 
     async def get_price_binance(self, trading_pair: str):
-        ...
+        binance_price = self.market_data_provider.get_price_by_type(self.config.binance_connector, trading_pair, price_type=PriceType.MidPrice)
+        return binance_price
 
     async def get_price_uniswap(self, trading_pair: str):
-        ...
+        uniswap_price = self.market_data_provider.get_price_by_type(self.config.uniswap_connector, trading_pair, price_type=PriceType.MidPrice)
+        return uniswap_price
 
     def to_format_status(self):
         return super().to_format_status()
