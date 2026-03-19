@@ -1,3 +1,4 @@
+import asyncio
 from decimal import Decimal
 from typing import List
 
@@ -143,3 +144,26 @@ class TriArbV2ControllerBase(ControllerBase):
             )
         ]
         )
+
+    def determine_executor_actions(self):
+        return super().determine_executor_actions()
+
+    async def update_processed_data(self):
+        """
+        Concurrently fetch and process market data, ready for decision making.
+        """
+        prices = await asyncio.gather([
+            self.get_price_binance(self.config.binance_pairs[0]),
+            self.get_price_binance(self.config.binance_pairs[1]),
+            self.get_price_uniswap(self.config.uniswap_pair)
+        ])
+        print(prices)
+
+    async def get_price_binance(self, trading_pair: str):
+        ...
+
+    async def get_price_uniswap(self, trading_pair: str):
+        ...
+
+    def to_format_status(self):
+        return super().to_format_status()
