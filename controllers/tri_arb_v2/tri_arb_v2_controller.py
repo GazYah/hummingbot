@@ -12,8 +12,8 @@ class TriArbV2ControllerConfig(ControllerConfigBase):
     """
     Placeholder text for TriArbV2ControllerConfig.
     """
-    controller_name: str = "tri_arb_v2"
-    controller_type: str = "arbitrage"
+    controller_name: str = "tri_arb_v2_controller"
+    controller_type: str = "tri_arb_v2"
 
     binance_connector: str = Field(
         default=...,
@@ -75,10 +75,12 @@ class TriArbV2ControllerConfig(ControllerConfigBase):
     @field_validator('binance_pairs', mode="before")
     @classmethod
     def validate_binance_pairs(cls, v):
-        if isinstance(v, str):
+        if isinstance(v, list):
+            pairs = [pair.strip().upper() for pair in v]
+        elif isinstance(v, str):
             pairs = [pair.strip().upper() for pair in v.split(',')]
         else:
-            raise TypeError("Binance trading pairs must be provided as a comma-separated string.")
+            raise TypeError("Binance trading pairs must be provided as a comma-separated string or list.")
 
         if len(pairs) != 2:
             raise ValueError("Exactly two Binance trading pairs must be provided, separated by a comma.")
@@ -98,9 +100,12 @@ class TriArbV2ControllerConfig(ControllerConfigBase):
     @field_validator('min_profitability', mode="before")
     @classmethod
     def validate_min_profitability(cls, v):
-        if not isinstance(v, (float, int, Decimal)):
+        if not isinstance(v, (str)):
             raise TypeError("Minimum profitability threshold must be a number (e.g., 0.01 for 1%).")
-        profitability = Decimal(v)
+        try:
+            profitability = Decimal(v)
+        except Exception:
+            raise ValueError("Minimum profitability threshold must be a valid decimal number.")
         if profitability < 0:
             raise ValueError("Minimum profitability threshold must be a non-negative number.")
         return profitability
