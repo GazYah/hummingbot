@@ -4,6 +4,7 @@ from typing import List
 
 from pydantic import Field, field_validator
 
+from hummingbot.core.data_type.common import MarketDict
 from hummingbot.strategy_v2.controllers.controller_base import ControllerBase, ControllerConfigBase
 from hummingbot.strategy_v2.executors.data_types import ConnectorPair
 
@@ -127,6 +128,14 @@ class TriArbV2ControllerConfig(ControllerConfigBase):
             raise ValueError("Maximum dollar hardcap trade amount must be a positive number.")
         return hardcap
 
+    def update_markets(self, markets: MarketDict) -> MarketDict:
+        # Only ensure both Binance pairs are present in the markets map; do not add the Uniswap pair.
+        updated_markets = dict(markets) if markets is not None else {}
+        binance_markets = updated_markets.setdefault(self.binance_connector, {})
+        for pair in self.binance_pairs:
+            binance_markets.setdefault(pair, {})
+        return updated_markets
+
 
 class TriArbV2Controller(ControllerBase):
     """
@@ -157,10 +166,10 @@ class TriArbV2Controller(ControllerBase):
         """
         Concurrently fetch and process market data, ready for decision making.
         """
-        prices = await asyncio.gather([
+        prices = await asyncio.gather(
             self.get_orderbook_binance(self.config.binance_pairs[0]),
             self.get_orderbook_binance(self.config.binance_pairs[1]),
-        ])
+        )
         print(prices)
 
     async def get_orderbook_binance(self, trading_pair: str):
