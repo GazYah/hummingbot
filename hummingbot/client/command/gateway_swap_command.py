@@ -161,8 +161,8 @@ class GatewaySwapCommand:
                 self.notify(f"Slippage: {slippage_pct}%")
 
             if "priceImpactPct" in quote_resp:
-                impact = float(quote_resp["priceImpactPct"]) * 100
-                self.notify(f"Price Impact: {impact:.2f}%")
+                impact = float(quote_resp["priceImpactPct"])
+                self.notify(f"Price Impact: {impact:.4f}%")
 
             # Show what user will spend and receive
             if side == "BUY":
@@ -186,10 +186,8 @@ class GatewaySwapCommand:
             # Get fee estimation from gateway
             self.notify(f"\nEstimating transaction fees for {chain} {network}...")
             fee_info = await self._get_gateway_instance().estimate_transaction_fee(
-
                 chain,
                 network,
-                transaction_type="swap"
             )
 
             native_token = fee_info.get("native_token", chain.upper())
@@ -266,13 +264,12 @@ class GatewaySwapCommand:
                 trading_pair = f"{base_token}-{quote_token}"
 
                 # Create a new GatewaySwap instance for this swap
-                # (The temporary one was already stopped)
                 swap_connector = GatewaySwap(
                     connector_name=connector,  # DEX connector (e.g., 'uniswap/amm', 'raydium/clmm')
                     chain=chain,
                     network=network,
                     address=wallet_address,
-                    trading_pairs=[trading_pair]
+                    trading_pairs=[trading_pair],
                 )
 
                 # Start the network connection
@@ -316,19 +313,20 @@ class GatewaySwapCommand:
                 self.notify(f"Order created: {order_id}")
                 self.notify("Monitoring transaction status...")
 
-                # Register the connector temporarily so events can be processed
-                # This allows MarketsRecorder to capture order events if it's running
-                if hasattr(self, 'connector_manager') and self.connector_manager:
-                    self.connector_manager.connectors[swap_connector.name] = swap_connector
-
                 # Use the common transaction monitoring helper
-                await GatewayCommandUtils.monitor_transaction_with_timeout(
+                result = await GatewayCommandUtils.monitor_transaction_with_timeout(
                     app=self,
                     connector=swap_connector,
                     order_id=order_id,
                     timeout=60.0,
                     check_interval=1.0,
                     pending_msg_delay=3.0
+                )
+
+                GatewayCommandUtils.handle_transaction_result(
+                    self, result,
+                    success_msg="Swap completed successfully!",
+                    failure_msg="Swap failed. Please try again."
                 )
 
                 # Clean up - remove temporary connector and stop network

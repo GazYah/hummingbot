@@ -111,12 +111,29 @@ class GatewayHttpClient:
             use_ssl = gateway_config.gateway_use_ssl
             if use_ssl:
                 # SSL connection with client certs
-                cert_path = gateway_config.certs_path
-                ssl_ctx = ssl.create_default_context(cafile=f"{cert_path}/ca_cert.pem")
-                ssl_ctx.load_cert_chain(certfile=f"{cert_path}/client_cert.pem",
-                                        keyfile=f"{cert_path}/client_key.pem",
-                                        password=Security.secrets_manager.password.get_secret_value())
-                conn = aiohttp.TCPConnector(ssl_context=ssl_ctx)
+                from hummingbot import root_path
+
+                cert_path = root_path() / "certs"
+                ca_file = str(cert_path / "ca_cert.pem")
+                cert_file = str(cert_path / "client_cert.pem")
+                key_file = str(cert_path / "client_key.pem")
+
+                password = Security.secrets_manager.password.get_secret_value()
+
+                ssl_ctx = ssl.create_default_context(cafile=ca_file)
+                ssl_ctx.load_cert_chain(
+                    certfile=cert_file,
+                    keyfile=key_file,
+                    password=password
+                )
+
+                # Create connector with explicit timeout settings
+                conn = aiohttp.TCPConnector(
+                    ssl=ssl_ctx,
+                    force_close=True,  # Don't reuse connections for debugging
+                    limit=100,
+                    limit_per_host=30,
+                )
             else:
                 # Non-SSL connection for development
                 conn = aiohttp.TCPConnector(ssl=False)
@@ -411,14 +428,15 @@ class GatewayHttpClient:
 
         parsed_response = {}
         try:
+            timeout = aiohttp.ClientTimeout(total=30)  # 30 second timeout
             if method == "get":
                 if len(params) > 0:
                     if use_body:
-                        response = await client.get(url, json=params)
+                        response = await client.get(url, json=params, timeout=timeout)
                     else:
-                        response = await client.get(url, params=params)
+                        response = await client.get(url, params=params, timeout=timeout)
                 else:
-                    response = await client.get(url)
+                    response = await client.get(url, timeout=timeout)
             elif method == "post":
                 response = await client.post(url, json=params)
             elif method == 'put':
@@ -427,22 +445,28 @@ class GatewayHttpClient:
                 response = await client.delete(url, json=params)
             else:
                 raise ValueError(f"Unsupported request method {method}")
-            if not fail_silently and response.status == 504:
-                self.logger().network(f"The network call to {url} has timed out.")
-            else:
-                try:
-                    parsed_response = await response.json()
-                except ContentTypeError:
-                    parsed_response = await response.text()
-                if response.status != 200 and \
-                   not fail_silently and \
-                   not self.is_timeout_error(parsed_response):
-                    self.log_error_codes(parsed_response)
+            # Always parse the response
+            try:
+                parsed_response = await response.json()
+            except ContentTypeError:
+                parsed_response = await response.text()
 
-                    if "error" in parsed_response:
-                        raise ValueError(f"Error on {method.upper()} {url} Error: {parsed_response['error']}")
-                    else:
-                        raise ValueError(f"Error on {method.upper()} {url} Error: {parsed_response}")
+            # Handle non-200 responses
+            if response.status != 200 and not fail_silently:
+                self.log_error_codes(parsed_response)
+
+                if "message" in parsed_response:
+                    # Gateway HttpError format: message (detailed), code (optional), error (generic HTTP name), name
+                    error_msg = parsed_response.get('message')
+                    error_code = parsed_response.get('code', '')
+                    error_name = parsed_response.get('error', '')
+                    error_type = parsed_response.get('name', '')
+                    code_suffix = f" [code: {error_code}]" if error_code else ""
+                    type_prefix = f"{error_type}: " if error_type else ""
+                    name_suffix = f" ({error_name})" if error_name else ""
+                    raise ValueError(f"Gateway error: {type_prefix}{error_msg}{name_suffix}{code_suffix}")
+                else:
+                    raise ValueError(f"Error on {method.upper()} {url}: {parsed_response}")
 
         except Exception as e:
             if not fail_silently:
@@ -465,9 +489,10 @@ class GatewayHttpClient:
     async def ping_gateway(self) -> bool:
         try:
             response: Dict[str, Any] = await self.api_request("get", "", fail_silently=True)
-            return response.get("status") == "ok"
+            success = response.get("status") == "ok"
+            return success
         except Exception as e:
-            self.logger().error(f"Failed to ping gateway: {e}")
+            self.logger().error(f"✗ Failed to ping gateway: {type(e).__name__}: {e}", exc_info=True)
             return False
 
     async def get_gateway_status(self, fail_silently: bool = False) -> List[Dict[str, Any]]:
@@ -623,15 +648,25 @@ class GatewayHttpClient:
         chain: str,
         network: str,
         address: str,
-        token_symbols: List[str],
+        token_symbols: List[str],  # Can be symbols or addresses
         fail_silently: bool = False,
     ) -> Dict[str, Any]:
+        """
+        Get token balances for a wallet address.
+
+        :param chain: The blockchain (e.g., "solana", "ethereum")
+        :param network: The network (e.g., "mainnet-beta", "mainnet")
+        :param address: The wallet address
+        :param token_symbols: List of token symbols OR token addresses to fetch balances for
+        :param fail_silently: If True, suppress errors
+        :return: Dictionary with balances
+        """
         if isinstance(token_symbols, list):
             token_symbols = [x for x in token_symbols if isinstance(x, str) and x.strip() != '']
             request_params = {
                 "network": network,
                 "address": address,
-                "tokens": token_symbols,
+                "tokens": token_symbols,  # Gateway accepts both symbols and addresses
             }
             return await self.api_request(
                 method="post",
@@ -854,6 +889,8 @@ class GatewayHttpClient:
     ) -> Dict[str, Any]:
         """
         Gets information about a AMM or CLMM pool
+
+        Note: Meteora pools will automatically include bins in the response
         """
         query_params = {
             "network": network,
@@ -941,10 +978,13 @@ class GatewayHttpClient:
         base_token_amount: Optional[float] = None,
         quote_token_amount: Optional[float] = None,
         slippage_pct: Optional[float] = None,
+        extra_params: Optional[Dict[str, Any]] = None,
         fail_silently: bool = False
     ) -> Dict[str, Any]:
         """
         Opens a new concentrated liquidity position
+
+        :param extra_params: Optional connector-specific parameters (e.g., {"strategyType": 0} for Meteora)
         """
         request_payload = {
             "network": network,
@@ -959,6 +999,10 @@ class GatewayHttpClient:
             request_payload["quoteTokenAmount"] = quote_token_amount
         if slippage_pct is not None:
             request_payload["slippagePct"] = slippage_pct
+
+        # Add connector-specific parameters
+        if extra_params:
+            request_payload.update(extra_params)
 
         # Parse connector to get name and type
         connector_name, connector_type = connector.split("/", 1)
@@ -1008,10 +1052,13 @@ class GatewayHttpClient:
         base_token_amount: Optional[float] = None,
         quote_token_amount: Optional[float] = None,
         slippage_pct: Optional[float] = None,
+        extra_params: Optional[Dict[str, Any]] = None,
         fail_silently: bool = False
     ) -> Dict[str, Any]:
         """
         Add liquidity to an existing concentrated liquidity position
+
+        :param extra_params: Optional connector-specific parameters (e.g., {"strategyType": 0} for Meteora)
         """
         request_payload = {
             "network": network,
@@ -1024,6 +1071,10 @@ class GatewayHttpClient:
             request_payload["quoteTokenAmount"] = quote_token_amount
         if slippage_pct is not None:
             request_payload["slippagePct"] = slippage_pct
+
+        # Add connector-specific parameters
+        if extra_params:
+            request_payload.update(extra_params)
 
         # Parse connector to get name and type
         connector_name, connector_type = connector.split("/", 1)
@@ -1099,18 +1150,21 @@ class GatewayHttpClient:
         connector: str,
         network: str,
         wallet_address: str,
-        pool_address: Optional[str] = None,
+        pool_address: Optional[str] = None,  # Not used by API, kept for compatibility
         fail_silently: bool = False
     ) -> Dict[str, Any]:
         """
-        Get all CLMM positions owned by a wallet, optionally filtered by pool
+        Get all CLMM positions owned by a wallet.
+
+        Note: The Gateway API does not support filtering by pool_address.
+        Filtering must be done client-side.
         """
         query_params = {
             "network": network,
             "walletAddress": wallet_address,
         }
-        if pool_address:
-            query_params["poolAddress"] = pool_address
+        # Note: poolAddress parameter is not supported by Gateway API
+        # Client-side filtering is done in gateway_lp.py
 
         # Parse connector to get name and type
         connector_name, connector_type = connector.split("/", 1)
@@ -1375,7 +1429,15 @@ class GatewayHttpClient:
 
         :param connector: Connector name
         :param network: Network name
-        :param pool_data: Pool configuration data
+        :param pool_data: Pool configuration data. Required fields:
+            - address (str): Pool contract address
+            - type (str): Pool type ("amm" or "clmm")
+            - baseTokenAddress (str): Base token contract address
+            - quoteTokenAddress (str): Quote token contract address
+            Optional fields from pool-info:
+            - baseSymbol (str): Base token symbol
+            - quoteSymbol (str): Quote token symbol
+            - feePct (float): Pool fee percentage
         :return: Response with status
         """
         params = {
@@ -1622,14 +1684,12 @@ class GatewayHttpClient:
         self,
         chain: str,
         network: str,
-        transaction_type: str = "swap"
     ) -> Dict[str, Any]:
         """
         Estimate transaction fee using gateway's estimate-gas endpoint.
 
         :param chain: Chain name (e.g., "ethereum", "solana")
         :param network: Network name
-        :param transaction_type: Type of transaction ("swap" or "approve")
         :return: Dictionary with fee estimation details
         """
         try:
@@ -1643,7 +1703,12 @@ class GatewayHttpClient:
             fee_in_native = gas_resp.get("fee", 0)  # Use the fee directly from response
             native_token = gas_resp.get("feeAsset", chain.upper())  # Use feeAsset from response
 
-            return {
+            # Extract EIP-1559 specific fields if present
+            gas_type = gas_resp.get("gasType")
+            max_fee_per_gas = gas_resp.get("maxFeePerGas")
+            max_priority_fee_per_gas = gas_resp.get("maxPriorityFeePerGas")
+
+            result = {
                 "success": True,
                 "fee_per_unit": fee_per_unit,
                 "estimated_units": compute_units,
@@ -1651,6 +1716,16 @@ class GatewayHttpClient:
                 "fee_in_native": fee_in_native,
                 "native_token": native_token
             }
+
+            # Add EIP-1559 fields if present
+            if gas_type:
+                result["gas_type"] = gas_type
+            if max_fee_per_gas is not None:
+                result["max_fee_per_gas"] = max_fee_per_gas
+            if max_priority_fee_per_gas is not None:
+                result["max_priority_fee_per_gas"] = max_priority_fee_per_gas
+
+            return result
 
         except Exception as e:
             return {

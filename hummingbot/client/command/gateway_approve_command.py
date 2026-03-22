@@ -119,7 +119,6 @@ class GatewayApproveCommand:
             fee_info = await self._get_gateway_instance().estimate_transaction_fee(
                 chain,
                 network,
-                transaction_type="approve"
             )
 
             native_token = fee_info.get("native_token", chain.upper())
@@ -190,11 +189,11 @@ class GatewayApproveCommand:
                     pending_msg_delay=3.0
                 )
 
-                # Add token-specific success/failure message
-                if result["completed"] and result["success"]:
-                    self.notify(f"✓ Token {token} is approved for spending on {connector}")
-                elif result["completed"] and not result["success"]:
-                    self.notify(f"✗ Token {token} approval failed. Please check your transaction.")
+                GatewayCommandUtils.handle_transaction_result(
+                    self, result,
+                    success_msg=f"Token {token} is approved for spending on {connector}",
+                    failure_msg=f"Token {token} approval failed. Please try again."
+                )
 
             finally:
                 await GatewayCommandUtils.exit_interactive_mode(self)
