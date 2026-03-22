@@ -1,8 +1,9 @@
 from hummingbot.core.api_throttler.data_types import LinkedLimitWeightPair, RateLimit
 from hummingbot.core.data_type.in_flight_order import OrderState
 
+# Constant for binance mainnet and testnet!
 DEFAULT_DOMAIN = "com"
-TESTNET_DOMAIN = "binance_testnet"
+TESTNET_DOMAIN = "testnet"
 
 HBOT_ORDER_ID_PREFIX = "x-MG43PCSN"
 MAX_ORDER_ID_LEN = 32
